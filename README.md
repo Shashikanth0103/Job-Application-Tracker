@@ -64,5 +64,5 @@ No servers, no manual setup. Everything runs automatically through Lambda.
 Your Name  
 Building tools so job hunting feels less like punishment.
 
-![anything-you-want-here](path/to/image.png)
+![how web page looks](https://github.com/Shashikanth0103/Job-Application-Tracker/blob/main/Images/webpage.png)
 
