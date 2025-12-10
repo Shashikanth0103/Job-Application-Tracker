@@ -1,0 +1,123 @@
+import json
+import boto3
+import base64
+import uuid
+from datetime import datetime
+
+s3 = boto3.client('s3')
+textract = boto3.client('textract')
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('job_application')
+
+BUCKET_NAME = 'job-tracker-resumes-shashi'
+
+def lambda_handler(event, context):
+    try:
+ 
+        body = json.loads(event['body'])
+        
+        user_id = body.get('userID')
+        file_content = body.get('fileContent')  # Base64 encoded file
+        file_name = body.get('fileName', 'resume.pdf')
+        application_id = body.get('applicationID')  # Optional: link to existing application
+        
+        if not all([user_id, file_content]):
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+                },
+                'body': json.dumps({'error': 'Missing required fields'})
+            }
+                file_bytes = base64.b64decode(file_content)
+        
+
+        resume_id = str(uuid.uuid4())
+        s3_key = f"{user_id}/{resume_id}_{file_name}"
+        
+        # Upload to S3
+        s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key=s3_key,
+            Body=file_bytes,
+            ContentType='application/pdf'
+        )
+        
+        print(f"File uploaded to S3: {s3_key}")
+        
+        # Extract text using Textract
+        textract_response = textract.detect_document_text(
+            Document={
+                'S3Object': {
+                    'Bucket': BUCKET_NAME,
+                    'Name': s3_key
+                }
+            }
+        )
+                extracted_text = ""
+        for block in textract_response['Blocks']:
+            if block['BlockType'] == 'LINE':
+                extracted_text += block['Text'] + "\n"
+        
+        print(f"Text extracted successfully. Length: {len(extracted_text)} characters")
+    
+        if application_id:
+            # Update existing application with resume info
+            table.update_item(
+                Key={
+                    'userID': user_id,
+                    'applicationID': application_id
+                },
+                UpdateExpression='SET resumeS3Key = :s3key, resumeFileName = :fname, resumeText = :text, uploadedAt = :uploaded',
+                ExpressionAttributeValues={
+                    ':s3key': s3_key,
+                    ':fname': file_name,
+                    ':text': extracted_text,
+                    ':uploaded': datetime.now().isoformat()
+                }
+            )
+            message = "Resume uploaded and linked to application"
+        else:
+  
+            table.put_item(
+                Item={
+                    'userID': user_id,
+                    'applicationID': f"resume-{resume_id}",
+                    'resumeS3Key': s3_key,
+                    'resumeFileName': file_name,
+                    'resumeText': extracted_text,
+                    'uploadedAt': datetime.now().isoformat(),
+                    'itemType': 'resume'  # To differentiate from job applications
+                }
+            )
+            message = "Resume uploaded and text extracted successfully"
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+            },
+            'body': json.dumps({
+                'message': message,
+                'resumeID': resume_id,
+                's3Key': s3_key,
+                'extractedTextLength': len(extracted_text),
+                'textPreview': extracted_text[:200] + '...' if len(extracted_text) > 200 else extracted_text
+            })
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+},
+            'body': json.dumps({'error': str(e)})
+        }

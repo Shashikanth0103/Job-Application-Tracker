@@ -1,0 +1,195 @@
+import json
+import boto3
+import re
+from collections import Counter
+from datetime import datetime
+from decimal import Decimal
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('job_application')
+
+def lambda_handler(event, context):
+    try:
+                body = json.loads(event['body'])
+        
+        user_id = body.get('userID')
+        application_id = body.get('applicationID')
+        job_description = body.get('jobDescription')
+        
+        print(f"Received request: userID={user_id}, applicationID={application_id}")
+        
+        if not all([user_id, application_id, job_description]):
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+                },
+                'body': json.dumps({'error': 'Missing required fields: userID, applicationID, and jobDescription are required'})
+            }
+        
+             response = table.get_item(
+            Key={
+                'userID': user_id,
+                'applicationID': application_id
+            }
+        )
+        
+        print(f"DynamoDB response: {response}")
+        
+        if 'Item' not in response:
+            return {
+                'statusCode': 404,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+                },
+                'body': json.dumps({'error': 'Application not found'})
+            }
+        
+        item = response['Item']
+    
+        if 'resumeText' not in item or not item['resumeText']:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+                },
+                'body': json.dumps({'error': 'No resume found for this application. Please upload a resume first.'})
+            }
+        
+        resume_text = item['resumeText']
+        print(f"Resume text length: {len(resume_text)}")
+        
+                       'userID': user_id,
+                'applicationID': application_id
+            },
+            UpdateExpression='SET atsScore = :score, lastChecked = :time, matchedKeywords = :matched, missingKeywords = :missing',
+            ExpressionAttributeValues={
+                ':score': Decimal(str(score_data['score'])),  # Convert to Decimal
+                ':time': score_data['checkedAt'],
+                ':matched': score_data['matchedKeywords'],
+                ':missing': score_data['missingKeywords']
+            }
+        )
+        
+        print(f"ATS Score calculated: {score_data['score']}")
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+            },
+            'body': json.dumps(score_data)
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+            },
+            'body': json.dumps({'error': str(e)})
+        }
+
+
+def calculate_ats_score(resume_text, job_description):
+    """
+    Calculate ATS score by comparing resume with job description
+    """
+    
+       resume_lower = resume_text.lower()
+    jd_lower = job_description.lower()
+    
+    # Extract keywords (words longer than 3 characters, excluding common words)
+    stop_words = {
+        'the', 'and', 'for', 'with', 'this', 'that', 'from', 'have', 'will', 
+        'your', 'about', 'their', 'which', 'there', 'would', 'could', 'should',
+        'what', 'when', 'where', 'who', 'why', 'how', 'been', 'were', 'was',
+        'are', 'can', 'has', 'had', 'but', 'not', 'you', 'all', 'one', 'our',
+        'out', 'use', 'way', 'than', 'them', 'then', 'these', 'some', 'into'
+    }
+    
+       jd_words = re.findall(r'\b[a-z]{3,}\b', jd_lower)
+    jd_keywords = [word for word in jd_words if word not in stop_words]
+    jd_keyword_counts = Counter(jd_keywords)
+    
+    # Get top 30 most common keywords from JD
+    important_keywords = [word for word, count in jd_keyword_counts.most_common(30)]
+    
+       matched_keywords = []
+    missing_keywords = []
+    
+    for keyword in important_keywords:
+        if keyword in resume_lower:
+            matched_keywords.append(keyword)
+        else:
+            missing_keywords.append(keyword)
+    
+       if len(important_keywords) > 0:
+        match_percentage = (len(matched_keywords) / len(important_keywords)) * 100
+    else:
+        match_percentage = 0
+    
+    # Bonus points for exact phrases
+    key_phrases = extract_key_phrases(job_description)
+    matched_phrases = [phrase for phrase in key_phrases if phrase.lower() in resume_lower]
+    
+      phrase_bonus = min(len(matched_phrases) * 5, 20)  # Max 20 bonus points
+    final_score = min(match_percentage + phrase_bonus, 100)
+    
+    return {
+        'score': round(final_score, 2),
+        'matchedKeywords': matched_keywords[:15],  # Top 15 matched
+        'missingKeywords': missing_keywords[:10],   # Top 10 missing
+        'matchedPhrases': matched_phrases,
+        'totalKeywordsInJD': len(important_keywords),
+        'matchedKeywordsCount': len(matched_keywords),
+        'checkedAt': datetime.now().isoformat(),
+        'suggestion': get_suggestion(final_score)
+    }
+
+
+def extract_key_phrases(text):
+    """
+    Extract common key phrases from job description
+    """
+    phrases = []
+        tech_patterns = [
+        r'\b(?:machine learning|data science|web development|cloud computing|devops|artificial intelligence)\b',
+        r'\b(?:project management|team leadership|agile|scrum|cross-functional)\b',
+        r'\b(?:bachelor\'?s? degree|master\'?s? degree|years? of experience)\b',
+        r'\b(?:problem solving|communication skills|analytical skills)\b',
+        r'\b(?:full stack|front end|back end|database design)\b'
+    ]
+    
+    for pattern in tech_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        phrases.extend(matches)
+    
+    return list(set(phrases))  # Remove duplicates
+
+
+def get_suggestion(score):
+    """
+    Provide suggestions based on ATS score
+    """
+    if score >= 80:
+        return "Excellent match! Your resume aligns well with the job description."
+    elif score >= 60:
+        return "Good match! Consider adding more relevant keywords from the job description."
+    elif score >= 40:
+        return "Moderate match. Review the missing keywords and add relevant ones to your resume."
+    else:
+        return "Low match. Significantly tailor your resume to include key skills and requirements from the job description."

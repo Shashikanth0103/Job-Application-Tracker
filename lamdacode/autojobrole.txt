@@ -1,0 +1,76 @@
+import json
+import boto3
+from datetime import datetime
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('job_application')
+
+def lambda_handler(event, context):
+    try:
+  
+        body = json.loads(event['body']) if isinstance(event.get('body'), str) else event.get('body', {})
+        
+        print(f"Received data: {body}")
+        
+               user_id = body.get('userID', 'user001')
+        application_id = body.get('applicationID') or body.get('id')
+        company = body.get('company')
+        role = body.get('role')
+        status = body.get('status', 'Applied')
+        date_applied = body.get('dateApplied')
+
+        if not all([application_id, company, role]):
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type',
+                    'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+                },
+                'body': json.dumps({
+                    'error': 'Missing required fields: applicationID, company, and role are required'
+                })
+            }
+        
+
+        item = {
+            'userID': user_id,
+            'applicationID': application_id,
+            'company': company,
+            'role': role,
+            'status': status,
+            'dateApplied': date_applied or datetime.now().strftime('%Y-%m-%d'),
+            'createdAt': datetime.now().isoformat()
+        }
+                table.put_item(Item=item)
+        
+        print(f"Application created successfully: {application_id}")
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+            },
+            'body': json.dumps({
+                'message': 'Application added successfully',
+                'applicationID': application_id,
+                'data': item
+            })
+        }
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET,PUT,DELETE'
+            },
+            'body': json.dumps({
+                'error': str(e),
+                'message': 'Failed to create application'
+            })
+        }

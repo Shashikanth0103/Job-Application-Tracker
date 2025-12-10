@@ -1,0 +1,50 @@
+import json
+import boto3
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('job-applications')
+
+def lambda_handler(event, context):
+    body = json.loads(event['body'])
+    application_id = body['applicationID']
+    
+    response = table.scan(
+        FilterExpression='applicationID = :appId',
+        ExpressionAttributeValues={
+            ':appId': application_id
+        }
+    )
+    
+    if response['Items']:
+        item = response['Items'][0]
+        table.update_item(
+            Key={
+                'userID': item['userID'],
+                'applicationID': application_id
+            },
+            UpdateExpression='SET #status = :newStatus',
+            ExpressionAttributeNames={
+                '#status': 'status'
+            },
+            ExpressionAttributeValues={
+                ':newStatus': body['status']
+            }
+        )
+        
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Methods': 'PUT, OPTIONS'
+            },
+            'body': json.dumps('Application updated successfully')
+        }
+    else:
+        return {
+            'statusCode': 404,
+            'headers': {
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps('Application not found')
+        }
