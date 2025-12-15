@@ -58,11 +58,18 @@ No servers, no manual setup. Everything runs automatically through Lambda.
 4. Upload your resume using the **Upload Resume** option.
 5. Click **ATS Score** to check your score and see suggestions to improve your resume.
 
+## Architecture
 
+1. Frontend communicates with backend via REST APIs
+2. API Gateway triggers AWS Lambda functions
+3. Lambda handles business logic and stores data in DynamoDB
+4. Resume files are uploaded and stored in Amazon S3
 
+## Future Enhancements
 
-Your Name  
-Building tools so job hunting feels less like punishment.
+1. User authentication and login for multiple users
+2. AWS SNS integration for application status notifications
+3. Improved interactivity in the frontend UI
 
 ![how web page looks](https://github.com/Shashikanth0103/Job-Application-Tracker/blob/main/Images/webpage.png)
 
